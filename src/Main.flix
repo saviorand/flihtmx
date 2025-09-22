@@ -7,7 +7,7 @@ import java.io.InputStream
 
 // ===== DATA TYPES =====
 
-enum Todo {
+enum Todo with ToString {
     case Todo(Int32, String, Bool) // id, text, completed
 }
 
@@ -68,17 +68,7 @@ mod AppState {
 
 enum HttpResponse {
     case Ok(String, Map[String, String])
-    case Binary(Vector[Int8], String, String)
     case Error(Int32, String)
-}
-
-// ===== EFFECTS =====
-
-eff JavaHttpServer {
-    def getPath(): String
-    def getMethod(): String
-    def getBody(): String
-    def sendResponse(response: HttpResponse): Unit
 }
 
 // ===== BUSINESS LOGIC =====
@@ -161,28 +151,25 @@ def parseFormData(body: String, key: String): Option[String] = {
     }
 }
 
-def handleTodoApp(appState: AppState[r]): HttpResponse \ {JavaHttpServer, r} = {
-    let path = JavaHttpServer.getPath();
-    let method = JavaHttpServer.getMethod();
-    
+def handleRequest(method: String, path: String, body: String, appState: AppState[r]): HttpResponse \ r = {
     match (method, path) {
         case ("GET", "/") => 
             HttpResponse.Ok(renderMainPage(), Map#{"Content-Type" => "text/html"})
             
-        case ("GET", "/todos") => 
+        case ("GET", "/todos") => {
             let todos = AppState.getAllTodos(appState);
-            HttpResponse.Ok(renderTodoList(todos), Map#{})
+            HttpResponse.Ok(renderTodoList(todos), Map#{"Content-Type" => "text/html"})
+        }
             
         case ("POST", "/todos") => {
-            let body = JavaHttpServer.getBody();
             let text = parseFormData(body, "text");
             match text {
                 case Some(todoText) if not String.isEmpty(String.trim(todoText)) => {
                     let todo = AppState.addTodo(String.trim(todoText), appState);
-                    HttpResponse.Ok(renderTodoItem(todo), Map#{})
+                    HttpResponse.Ok(renderTodoItem(todo), Map#{"Content-Type" => "text/html"})
                 }
                 case _ => 
-                    HttpResponse.Ok("<div class='error'>Todo text cannot be empty</div>", Map#{})
+                    HttpResponse.Ok("<div class='error'>Todo text cannot be empty</div>", Map#{"Content-Type" => "text/html"})
             }
         }
             
@@ -191,11 +178,11 @@ def handleTodoApp(appState: AppState[r]): HttpResponse \ {JavaHttpServer, r} = {
             match Int32.parse(10, idStr) {
                 case Ok(todoId) => 
                     match AppState.toggleTodo(todoId, appState) {
-                        case Some(todo) => HttpResponse.Ok(renderTodoItem(todo), Map#{})
-                        case None => HttpResponse.Ok("<div class='error'>Todo not found</div>", Map#{})
+                        case Some(todo) => HttpResponse.Ok(renderTodoItem(todo), Map#{"Content-Type" => "text/html"})
+                        case None => HttpResponse.Ok("<div class='error'>Todo not found</div>", Map#{"Content-Type" => "text/html"})
                     }
                 case Err(_) => 
-                    HttpResponse.Ok("<div class='error'>Invalid todo ID</div>", Map#{})
+                    HttpResponse.Ok("<div class='error'>Invalid todo ID</div>", Map#{"Content-Type" => "text/html"})
             }
         }
             
@@ -204,10 +191,10 @@ def handleTodoApp(appState: AppState[r]): HttpResponse \ {JavaHttpServer, r} = {
             match Int32.parse(10, idStr) {
                 case Ok(todoId) => {
                     AppState.deleteTodo(todoId, appState);
-                    HttpResponse.Ok("", Map#{})
+                    HttpResponse.Ok("", Map#{"Content-Type" => "text/html"})
                 }
                 case Err(_) => 
-                    HttpResponse.Ok("<div class='error'>Invalid todo ID</div>", Map#{})
+                    HttpResponse.Ok("<div class='error'>Invalid todo ID</div>", Map#{"Content-Type" => "text/html"})
             }
         }
             
@@ -239,66 +226,34 @@ def startServer(port: Int32, appState: AppState[r]): Unit \ {IO, Net, Logger} = 
 }
 
 def createHandler(appState: AppState[r]): HttpHandler \ IO = new HttpHandler {
-    def $handle(_this: HttpHandler, exchange: HttpExchange): Unit = {
-        unsafe run {
-            let response = handleTodoApp(appState);
-            JavaHttpServer.sendResponse(response)
-        } 
-        with Logger.runWithIO
-        with handler JavaHttpServer {
-            def getPath(_, resume) = resume(exchange.getRequestURI().getPath())
-            def getMethod(_, resume) = resume(exchange.getRequestMethod())
-            def getBody(_, resume) = {
-                let inputStream = exchange.getRequestBody();
-                let scanner = new Scanner(inputStream);
-                let body = if (scanner.hasNext()) scanner.useDelimiter("\\A").next() else "";
-                resume(body)
+    def $handle(_this: HttpHandler, exchange: HttpExchange): Unit \ {IO, Net}= {
+        let method = exchange.getRequestMethod();
+        let path = exchange.getRequestURI().getPath();
+        
+        let inputStream = exchange.getRequestBody();
+        let scanner = new Scanner(inputStream);
+        let body = if (scanner.hasNext()) scanner.useDelimiter("\\A").next() else "";
+        
+        let response = unsafe handleRequest(method, path, body, appState);
+        
+        match response {
+            case HttpResponse.Ok(content, headers) => {
+                Map.forEach(k -> v -> exchange.getResponseHeaders().set(k, v), headers);
+                let responseBytes = content.getBytes();
+                exchange.sendResponseHeaders(200, toInt64(Array.length(responseBytes)));
+                let outputStream = exchange.getResponseBody();
+                outputStream.write(responseBytes);
+                outputStream.close();
+                exchange.close()
             }
-            def sendResponse(response, resume) = {
-                match response {
-                    case HttpResponse.Ok(content, headers) => {
-                        sendStringResponseWithHeaders(exchange, 200, content, headers);
-                        resume()
-                    }
-                    case HttpResponse.Binary(bytes, contentType, fileName) => {
-                        exchange.getResponseHeaders().set("Content-Type", contentType);
-                        exchange.getResponseHeaders().set("Content-Disposition", "attachment; filename=\"${fileName}\"");
-                        sendBinaryResponse(exchange, 200, bytes);
-                        resume()
-                    }
-                    case HttpResponse.Error(code, message) => {
-                        sendStringResponse(exchange, code, message);
-                        resume()
-                    }
-                }
+            case HttpResponse.Error(code, message) => {
+                let responseBytes = message.getBytes();
+                exchange.sendResponseHeaders(code, toInt64(Array.length(responseBytes)));
+                let outputStream = exchange.getResponseBody();
+                outputStream.write(responseBytes);
+                outputStream.close();
+                exchange.close()
             }
-        } 
+        }
     }
-}
-
-def sendStringResponse(exchange: HttpExchange, code: Int32, content: String): Unit \ IO = {
-    let responseBytes = content.getBytes();
-    exchange.sendResponseHeaders(code, toInt64(String.length(content)));
-    let outputStream = exchange.getResponseBody();
-    outputStream.write(responseBytes);
-    outputStream.close();
-    exchange.close()
-}
-
-def sendStringResponseWithHeaders(exchange: HttpExchange, code: Int32, content: String, headers: Map[String, String]): Unit \ IO = {
-    Map.forEach(k -> v -> exchange.getResponseHeaders().set(k, v), headers);
-    let responseBytes = content.getBytes();
-    exchange.sendResponseHeaders(code, toInt64(String.length(content)));
-    let outputStream = exchange.getResponseBody();
-    outputStream.write(responseBytes);
-    outputStream.close();
-    exchange.close()
-}
-
-def sendBinaryResponse(exchange: HttpExchange, code: Int32, content: Vector[Int8]): Unit \ IO = {
-    exchange.sendResponseHeaders(code, toInt64(Vector.length(content)));
-    let outputStream = exchange.getResponseBody();
-    outputStream.write(content);
-    outputStream.close();
-    exchange.close()
 }
