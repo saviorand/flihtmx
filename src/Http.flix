@@ -10,16 +10,10 @@ enum HttpResponse {
     case Error(Int32, String)
 }
 
-def createHandlerWithState(stateRef: Ref[AppState, r]): HttpHandler \ {IO} = new HttpHandler {
-    def $handle(_this: HttpHandler, exchange: HttpExchange): Unit \ {r, IO, Net} = {
-        processRequest(stateRef, exchange)
-    }
-}
-
 def startServerWithStateRef(stateRef: Ref[AppState, r], port: Int32): Unit \ {IO, Net, Logger} = {
     let addr = new InetSocketAddress(port);
     let server = JavaHttpServer.create(addr, 0);
-    server.createContext("/", createHandlerWithState(stateRef));
+    server.createContext("/", createHandlerWithStateRef(stateRef));
     server.start();
     let currentThread = Thread.currentThread();
     try {
@@ -27,6 +21,12 @@ def startServerWithStateRef(stateRef: Ref[AppState, r], port: Int32): Unit \ {IO
     } catch {
         case _: InterruptedException => 
             Logger.info("Server interrupted, shutting down...")
+    }
+}
+
+def createHandlerWithStateRef(stateRef: Ref[AppState, r]): HttpHandler \ {IO} = new HttpHandler {
+    def $handle(_this: HttpHandler, exchange: HttpExchange): Unit \ {r, IO, Net} = {
+        processRequest(stateRef, exchange)
     }
 }
 
