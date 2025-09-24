@@ -2,10 +2,11 @@ import com.sun.net.httpserver.{HttpServer => JavaHttpServer, HttpHandler, HttpEx
 import java.net.InetSocketAddress
 import java.lang.Thread
 import java.util.Scanner
+import java.util.UUID
 
-eff UserCommands {
-    def getCurrentCommand(): UserCommand
-}
+// =============================================================================
+// DOMAIN MODEL
+// =============================================================================
 
 enum UserCommand {
     case ViewHomePage
@@ -38,16 +39,29 @@ mod Todo {
     }
 }
 
+enum AppState with ToString {
+    case AppState(List[Todo])
+}
+
+enum HttpResponse {
+    case Ok(String, Map[String, String])
+    case Error(Int32, String)
+}
+
+// =============================================================================
+// EFFECTS
+// =============================================================================
+
+eff UserCommands {
+    def getCurrentCommand(): UserCommand
+}
+
 eff TodoState {
     def getAllTodos(): List[Todo]
     def addTodo(text: String): Todo  
     def toggleTodo(id: String): Option[Todo]
     def deleteTodo(id: String): Bool
     def findTodo(id: String): Option[Todo]
-}
-
-enum AppState with ToString {
-    case AppState(List[Todo])
 }
 
 eff View {
@@ -59,28 +73,14 @@ eff View {
     def showEmptyState(): Unit
 }
 
-eff HttpServer {
-    def sendResponse(exchange: HttpExchange, response: HttpResponse): Unit
-    def getRequestInfo(exchange: HttpExchange): (String, String, String)
-}
-
-enum HttpResponse {
-    case Ok(String, Map[String, String])
-    case Error(Int32, String)
-}
-
-eff Form {
-    def getFormData(key: String): Option[String]
-}
-
-eff Navigation {
-    def getCurrentRoute(): (String, String) // method, path
-}
-
 eff HtmxRenderer {
     def renderAsHtml(content: String): Unit
     def renderPartialHtml(content: String): Unit
 }
+
+// =============================================================================
+// BUSINESS LOGIC
+// =============================================================================
 
 def handleUserCommand(): Unit \ {TodoState, View, UserCommands} = {
     let command = UserCommands.getCurrentCommand();
@@ -120,59 +120,30 @@ def handleUserCommand(): Unit \ {TodoState, View, UserCommands} = {
     }
 }
 
-mod UserCommands {
-    pub def handleWithHttp(method: String, path: String, formData: Map[String, String], 
-                          f: Unit -> a \ ef): a \ (ef - UserCommands) =
-        run {
-            f()
-        } with handler UserCommands {
-            def getCurrentCommand(_, k) = {
-                let command = parseHttpToCommand(method, path, formData);
-                k(command)
+def parseHttpToCommand(method: String, path: String, formData: Map[String, String]): UserCommand = {
+    match (method, path) {
+        case ("GET", "/") => UserCommand.ViewHomePage
+        case ("GET", "/todos") => UserCommand.ViewTodoList
+        case ("POST", "/todos") => 
+            match Map.get("text", formData) {
+                case Some(text) => UserCommand.AddTodo(text)
+                case None => UserCommand.UnknownCommand
             }
+        case ("PUT", p) if String.startsWith(prefix="/todos/", p) => {
+            let todoId = String.drop(7, p);
+            UserCommand.ToggleTodo(todoId)
         }
-
-    def parseHttpToCommand(method: String, path: String, formData: Map[String, String]): UserCommand = {
-        match (method, path) {
-            case ("GET", "/") => UserCommand.ViewHomePage
-            case ("GET", "/todos") => UserCommand.ViewTodoList
-            case ("POST", "/todos") => 
-                match Map.get("text", formData) {
-                    case Some(text) => UserCommand.AddTodo(text)
-                    case None => UserCommand.UnknownCommand
-                }
-            case ("PUT", p) if String.startsWith(prefix="/todos/", p) => {
-                let todoId = String.drop(7, p);
-                UserCommand.ToggleTodo(todoId)
-            }
-            case ("DELETE", p) if String.startsWith(prefix="/todos/", p) => {
-                let todoId = String.drop(7, p);
-                UserCommand.DeleteTodo(todoId)
-            }
-            case _ => UserCommand.UnknownCommand
+        case ("DELETE", p) if String.startsWith(prefix="/todos/", p) => {
+            let todoId = String.drop(7, p);
+            UserCommand.DeleteTodo(todoId)
         }
-    }
-
-    pub def handleWithCli(args: List[String], f: Unit -> a \ ef): a \ (ef - UserCommands) =
-        run {
-            f()
-        } with handler UserCommands {
-            def getCurrentCommand(_, k) = {
-                let command = parseCliToCommand(args);
-                k(command)
-            }
-        }
-
-    def parseCliToCommand(args: List[String]): UserCommand = match args {
-        case "home" :: _ => UserCommand.ViewHomePage
-        case "list" :: _ => UserCommand.ViewTodoList  
-        case "add" :: text :: _ => UserCommand.AddTodo(text)
-        case "toggle" :: id :: _ => UserCommand.ToggleTodo(id)
-        case "delete" :: id :: _ => UserCommand.DeleteTodo(id)
         case _ => UserCommand.UnknownCommand
     }
 }
 
+// =============================================================================
+// UI COMPONENTS
+// =============================================================================
 
 mod Components {
     pub def mainPageHtml(): String = String.unlines(List#{
@@ -241,7 +212,7 @@ mod Components {
             emptyStateHtml()
         } else {
             let todoItems = List.map(todoItemHtml, List.reverse(todos));
-            String.intercalate("\\", todoItems)
+            String.intercalate("", todoItems)
         }
     }
 
@@ -275,249 +246,162 @@ mod Components {
     })
 }
 
-
-// =============================================================================
-// EFFECT HANDLERS
-// =============================================================================
-
-mod TodoState {
-    pub def handle(stateRef: Ref[AppState, r], f: Unit -> a \ ef): a \ (ef - TodoState + r) =
-        run {
-            f()
-        } with handler TodoState {
-            def getAllTodos(_, k) = {
-                let AppState(todos) = Ref.get(stateRef);
-                k(todos)
-            }
-            def addTodo(text, k) = {
-                let AppState(todos) = Ref.get(stateRef);
-                let id = Int64.toString(Random.randomInt64());
-                let todo = Todo.Todo(id, text, false);
-                let newState = AppState(todo :: todos);
-                Ref.put(newState, stateRef);
-                k(todo)
-            }
-            def toggleTodo(todoId, k) = {
-                let AppState(todos) = Ref.get(stateRef);
-                let (updatedTodo, newTodos) = toggleTodoInList(todoId, todos);
-                Ref.put(AppState(newTodos), stateRef);
-                k(updatedTodo)
-            }
-            def deleteTodo(todoId, k) = {
-                let AppState(todos) = Ref.get(stateRef);
-                let originalLen = List.length(todos);
-                let newTodos = List.filter(todo -> Todo.getId(todo) != todoId, todos);
-                let deleted = List.length(newTodos) < originalLen;
-                Ref.put(AppState(newTodos), stateRef);
-                k(deleted)
-            }
-            def findTodo(todoId, k) = {
-                let AppState(todos) = Ref.get(stateRef);
-                let found = List.find(todo -> Todo.getId(todo) == todoId, todos);
-                k(found)
-            }
-        }
-
-    def toggleTodoInList(todoId: String, todos: List[Todo]): (Option[Todo], List[Todo]) = {
-        def helper(remaining, found, acc) = match remaining {
-            case Nil => (found, List.reverse(acc))
-            case todo :: rest => 
-                if (Todo.getId(todo) == todoId) {
-                    let toggled = Todo.toggle(todo);
-                    helper(rest, Some(toggled), toggled :: acc)
-                } else {
-                    helper(rest, found, todo :: acc)
-                }
-        };
-        helper(todos, None, Nil)
-    }
-}
-
-/// Handler that interprets View effects as HTMX/HTML responses
-mod View {
-    pub def handleWithHtmx(f: Unit -> a \ ef): a \ (ef - View + HtmxRenderer) =
-        run {
-            f()
-        } with handler View {
-            def showMainPage(_, k) = {
-                HtmxRenderer.renderAsHtml(Components.mainPageHtml());
-                k()
-            }
-            def showTodoList(todos, k) = {
-                HtmxRenderer.renderPartialHtml(Components.todoListHtml(todos));
-                k()
-            }
-            def showTodoItem(todo, k) = {
-                HtmxRenderer.renderPartialHtml(Components.todoItemHtml(todo));
-                k()
-            }
-            def showAddForm(_, k) = {
-                HtmxRenderer.renderPartialHtml(Components.addFormHtml());
-                k()
-            }
-            def showError(message, k) = {
-                HtmxRenderer.renderPartialHtml(Components.errorHtml(message));
-                k()
-            }
-            def showEmptyState(_, k) = {
-                HtmxRenderer.renderPartialHtml(Components.emptyStateHtml());
-                k()
-            }
-        }
-}
-
-mod Form {
-    pub def handleWithHttp(requestBody: String, f: Unit -> a \ ef): a \ (ef - Form) =
-        run {
-            f()
-        } with handler Form {
-            def getFormData(key, k) = {
-                let result = parseFormData(requestBody, key);
-                k(result)
-            }
-        }
-
-    def parseFormData(body: String, key: String): Option[String] = {
-        let pairs = String.split(regex="&", body);
-        let keyValue = List.findLeft(pair -> String.startsWith(prefix="${key}=", pair), pairs);
-        match keyValue {
-            case Some(kv) =>
-                let value = String.drop(String.length(key) + 1, kv);
-                Some(String.replace(src="+", dst=" ", value))
-            case None => None
-        }
-    }
-}
-
-mod Navigation {
-    pub def handleWithHttp(method: String, path: String, f: Unit -> a \ ef): a \ (ef - Navigation) =
-        run {
-            f()
-        } with handler Navigation {
-            def getCurrentRoute(_, k) = k((method, path))
-        }
-}
-
-mod HtmxRenderer {
-    // def htmlHeaders(): Map[String, String] = 
-    //     Map{"Content-Type" => "text/html; charset=utf-8"}
-
-    pub def handleWithHttp(exchange: HttpExchange, f: Unit -> a \ ef): a \ (ef - HtmxRenderer + IO) =
-        run {
-            f()
-        } with handler HtmxRenderer {
-            def renderAsHtml(content, k) = {
-                writeHttpResponse(exchange, HttpResponse.Ok(content, htmlHeaders()));
-                k()
-            }
-            def renderPartialHtml(content, k) = {
-                writeHttpResponse(exchange, HttpResponse.Ok(content, htmlHeaders()));
-                k()
-            }
-        }
-
-    def writeHttpResponse(exchange: HttpExchange, response: HttpResponse): Unit \\ IO = {
-        match response {
-            case HttpResponse.Ok(content, headers) => {
-                Map.forEach(key -> value -> exchange.getResponseHeaders().set(key, value), headers);
-                let responseBytes = content.getBytes();
-                exchange.sendResponseHeaders(200, Int32.toInt64(Array.length(responseBytes)));
-                let outputStream = exchange.getResponseBody();
-                outputStream.write(responseBytes);
-                outputStream.close()
-            }
-            case HttpResponse.Error(code, message) => {
-                let responseBytes = message.getBytes();
-                exchange.sendResponseHeaders(code, Int32.toInt64(Array.length(responseBytes)));
-                let outputStream = exchange.getResponseBody();
-                outputStream.write(responseBytes);
-                outputStream.close()
-            }
-        };
-        exchange.close()
-    }
-}
-
-mod HttpServer {
-    pub def handle(f: Unit -> a \ ef): a \ (ef - HttpServer + IO) =
-        run {
-            f()
-        } with handler HttpServer {
-            def getRequestInfo(exchange, k) = {
-                let method = exchange.getRequestMethod();
-                let path = exchange.getRequestURI().getPath();
-                let body = readRequestBody(exchange);
-                k((method, path, body))
-            }
-            def sendResponse(exchange, response, k) = {
-                HtmxRenderer.writeHttpResponse(exchange, response);
-                k()
-            }
-        }
-
-    def readRequestBody(exchange: HttpExchange): String \\ IO = {
-        let inputStream = exchange.getRequestBody();
-        let scanner = new Scanner(inputStream);
-        if (scanner.hasNext()) scanner.useDelimiter(\"\\\\A\").next() else \"\"
-    }
-}
-
-// =============================================================================
-// REQUEST PROCESSING
-// =============================================================================
-
-/// Process HTTP request by composing all effect handlers
-def processRequest(exchange: HttpExchange): Unit \ {Random, TodoState, IO} = {
-    let (method, path, body) = (exchange.getRequestMethod(), exchange.getRequestURI().getPath(), \"\");
+def processRequest(stateRef: Ref[AppState, r], exchange: HttpExchange): Unit \ {r, IO, Net} = {
+    let method = exchange.getRequestMethod();
+    let path = exchange.getRequestURI().getPath();
+    let body = readRequestBody(exchange);
+    let formData = parseFormData(body);
+    let command = parseHttpToCommand(method, path, formData);
     
-    run {
-        handleRoute()
-    } with Navigation.handleWithHttp(method, path)
-      with Form.handleWithHttp(body)
-      with View.handleWithHtmx
-      with HtmxRenderer.handleWithHttp(exchange)
+    let response = match command {
+        case UserCommand.ViewHomePage => 
+            HttpResponse.Ok(Components.mainPageHtml(), htmlHeaders())
+        
+        case UserCommand.ViewTodoList => {
+            let AppState.AppState(todos) = Ref.get(stateRef);
+            HttpResponse.Ok(Components.todoListHtml(todos), htmlHeaders())
+        }
+        
+        case UserCommand.AddTodo(text) => {
+            if (not String.isEmpty(String.trim(text))) {
+                let AppState.AppState(todos) = Ref.get(stateRef);
+                let id = UUID.randomUUID().toString();
+                let todo = Todo.Todo(id, String.trim(text), false);
+                let newState = AppState.AppState(todo :: todos);
+                Ref.put(newState, stateRef);
+                HttpResponse.Ok(Components.todoItemHtml(todo), htmlHeaders())
+            } else {
+                HttpResponse.Ok(Components.errorHtml("Todo text cannot be empty"), htmlHeaders())
+            }
+        }
+        
+        case UserCommand.ToggleTodo(todoId) => {
+            let AppState.AppState(todos) = Ref.get(stateRef);
+            let (maybeTodo, newTodos) = toggleTodoInList(todoId, todos);
+            Ref.put(AppState.AppState(newTodos), stateRef);
+            match maybeTodo {
+                case Some(todo) => HttpResponse.Ok(Components.todoItemHtml(todo), htmlHeaders())
+                case None => HttpResponse.Ok(Components.errorHtml("Todo not found"), htmlHeaders())
+            }
+        }
+        
+        case UserCommand.DeleteTodo(todoId) => {
+            let AppState.AppState(todos) = Ref.get(stateRef);
+            let newTodos = List.filter(todo -> Todo.getId(todo) != todoId, todos);
+            Ref.put(AppState.AppState(newTodos), stateRef);
+            HttpResponse.Ok("", htmlHeaders())
+        }
+        
+        case UserCommand.UnknownCommand => 
+            HttpResponse.Error(404, "Not Found")
+    };
+    
+    writeHttpResponse(exchange, response)
+}
+
+def toggleTodoInList(todoId: String, todos: List[Todo]): (Option[Todo], List[Todo]) = {
+    def helper(remaining, found, acc) = match remaining {
+        case Nil => (found, List.reverse(acc))
+        case todo :: rest => 
+            if (Todo.getId(todo) == todoId) {
+                let toggled = Todo.toggle(todo);
+                helper(rest, Some(toggled), toggled :: acc)
+            } else {
+                helper(rest, found, todo :: acc)
+            }
+    };
+    helper(todos, None, Nil)
+}
+
+def htmlHeaders(): Map[String, String] = 
+    Map#{"Content-Type" => "text/html; charset=utf-8"}
+
+def writeHttpResponse(exchange: HttpExchange, response: HttpResponse): Unit \ IO = {
+    match response {
+        case HttpResponse.Ok(content, headers) => {
+            Map.forEach(key -> value -> exchange.getResponseHeaders().set(key, value), headers);
+            let responseBytes = content.getBytes();
+            exchange.sendResponseHeaders(200, Int32.toInt64(Array.length(responseBytes)));
+            let outputStream = exchange.getResponseBody();
+            outputStream.write(responseBytes);
+            outputStream.close()
+        }
+        case HttpResponse.Error(code, message) => {
+            let responseBytes = message.getBytes();
+            exchange.sendResponseHeaders(code, Int32.toInt64(Array.length(responseBytes)));
+            let outputStream = exchange.getResponseBody();
+            outputStream.write(responseBytes);
+            outputStream.close()
+        }
+    };
+    exchange.close()
 }
 
 // =============================================================================
 // SERVER INFRASTRUCTURE
 // =============================================================================
 
-def startServer(port: Int32): Unit \ {IO, Net} = {
-    let addr = new InetSocketAddress(port);
-    let server = JavaHttpServer.create(addr, 0);
-    server.createContext(\"/\", createHandler());
-    server.start()
-}
-
-def createHandler(): HttpHandler \ IO = new HttpHandler {
-    def $handle(_this: HttpHandler, exchange: HttpExchange): Unit \\ IO = {
-        processRequest(exchange)
+def createHandlerWithState(stateRef: Ref[AppState, r]): HttpHandler \ {IO} = new HttpHandler {
+    def $handle(_this: HttpHandler, exchange: HttpExchange): Unit \ {r, IO, Net} = {
+        processRequest(stateRef, exchange)
     }
 }
 
-def initialState(): AppState = AppState(List#{
+def startServerWithState(stateRef: Ref[AppState, r], port: Int32): Unit \ {IO, Net} = {
+    let addr = new InetSocketAddress(port);
+    let server = JavaHttpServer.create(addr, 0);
+    server.createContext("/", createHandlerWithState(stateRef));
+    server.start()
+}
+
+def initialState(): AppState = AppState.AppState(List#{
     Todo.Todo("1", "Learn UI effects", false),
     Todo.Todo("2", "Separate concerns", false),
     Todo.Todo("3", "Build with effects", false)
 })
-
-// =============================================================================
-// MAIN APPLICATION
-// =============================================================================
 
 def main(): Unit \ {IO, Net, NonDet} =
     region rc {
         let stateRef = Ref.fresh(rc, initialState());
         
         run {
-            Logger.info(\"Starting Effect-Oriented Todo server (UI as Effect) on port 8080...\");
-            startServer(8080);
-            Logger.info(\"Server ready! Visit http://localhost:8080\");
+            Logger.info("Starting Effect-Oriented Todo server on port 8080...");
+            startServerWithState(stateRef, 8080);
+            Logger.info("Server ready! Visit http://localhost:8080");
             
             let currentThread = Thread.currentThread();
             unsafe currentThread.join()
             
-        } with TodoState.handle(stateRef)
-          with Logger.runWithIO
+        } with Logger.runWithIO
           with Random.runWithIO
     }
+
+
+// =============================================================================
+// HTTP UTILITIES
+// =============================================================================
+
+def parseFormData(body: String): Map[String, String] = {
+    if (String.isEmpty(body)) {
+        Map.empty()
+    } else {
+        let pairs = String.split(regex="&", body);
+        List.foldLeft((acc, pair) -> {
+            let parts = String.split(regex="=", pair);
+            match parts {
+                case key :: value :: _ => {
+                    let decodedKey = String.replace(src="+", dst=" ", key);
+                    let decodedValue = String.replace(src="+", dst=" ", value);
+                    Map.insert(decodedKey, decodedValue, acc)
+                }
+                case _ => acc
+            }
+        }, Map.empty(), pairs)
+    }
+}
+
+def readRequestBody(exchange: HttpExchange): String \ IO = {
+    let inputStream = exchange.getRequestBody();
+    let scanner = new Scanner(inputStream);
+    if (scanner.hasNext()) scanner.useDelimiter("\\A").next() else ""
+}
