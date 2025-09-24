@@ -1,4 +1,5 @@
 import com.sun.net.httpserver.{HttpServer => JavaHttpServer, HttpHandler, HttpExchange}
+import java.lang.InterruptedException
 import java.net.InetSocketAddress
 import java.lang.Thread
 import java.util.Scanner
@@ -360,7 +361,7 @@ def initialState(): AppState = AppState.AppState(List#{
     Todo.Todo("3", "Build with effects", false)
 })
 
-def main(): Unit \ {IO, Net, NonDet} =
+def main(): Unit \ {IO, Net} =
     region rc {
         let stateRef = Ref.fresh(rc, initialState());
         
@@ -370,12 +371,15 @@ def main(): Unit \ {IO, Net, NonDet} =
             Logger.info("Server ready! Visit http://localhost:8080");
             
             let currentThread = Thread.currentThread();
-            unsafe currentThread.join()
+            try {
+                currentThread.join()
+            } catch {
+                case _: InterruptedException => 
+                    Logger.info("Server interrupted, shutting down...")
+            }
             
         } with Logger.runWithIO
-          with Random.runWithIO
     }
-
 
 // =============================================================================
 // HTTP UTILITIES
