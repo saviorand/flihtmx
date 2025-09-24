@@ -3,84 +3,50 @@ import java.net.InetSocketAddress
 import java.lang.InterruptedException
 import java.lang.Thread
 import java.util.Scanner
-import java.util.UUID
 
 enum HttpResponse {
     case Ok(String, Map[String, String])
     case Error(Int32, String)
 }
 
-def startServerWithStateRef(stateRef: Ref[AppState, r], port: Int32): Unit \ {IO, Net, Logger} = {
-    let addr = new InetSocketAddress(port);
-    let server = JavaHttpServer.create(addr, 0);
-    server.createContext("/", createHandlerWithStateRef(stateRef));
-    server.start();
-    let currentThread = Thread.currentThread();
-    try {
-        currentThread.join()
-    } catch {
-        case _: InterruptedException => 
-            Logger.info("Server interrupted, shutting down...")
+def startServer(port: Int32): Unit \ {IO, Net, Logger} = {
+    region rc {
+        let stateRef = Ref.fresh(rc, initialState());
+        let addr = new InetSocketAddress(port);
+        let server = JavaHttpServer.create(addr, 0);
+        server.createContext("/", createHandler(stateRef));
+        server.start();
+        Logger.info("Effect-Oriented Todo Server ready at http://localhost:${port}");
+        
+        let currentThread = Thread.currentThread();
+        try {
+            currentThread.join()
+        } catch {
+            case _: InterruptedException => 
+                Logger.info("Server shutting down...")
+        }
     }
 }
 
-def createHandlerWithStateRef(stateRef: Ref[AppState, r]): HttpHandler \ {IO} = new HttpHandler {
-    def $handle(_this: HttpHandler, exchange: HttpExchange): Unit \ {r, IO, Net} = {
-        processRequest(stateRef, exchange)
+def createHandler(stateRef: Ref[AppState, r]): HttpHandler \ {IO} = new HttpHandler {
+    def $handle(_this: HttpHandler, exchange: HttpExchange): Unit \ {IO, Net, r} = {
+        handleRequest(stateRef, exchange)
     }
 }
 
-def processRequest(stateRef: Ref[AppState, r], exchange: HttpExchange): Unit \ {r, IO, Net} = {
+def handleRequest(stateRef: Ref[AppState, r], exchange: HttpExchange): Unit \ {IO, Net, r} = {
     let method = exchange.getRequestMethod();
     let path = exchange.getRequestURI().getPath();
     let body = readRequestBody(exchange);
     let formData = parseFormData(body);
-    let command = parseHttpToCommand(method, path, formData);
-    
-    let response = match command {
-        case UserCommand.ViewHomePage => 
-            HttpResponse.Ok(Components.mainPageHtml(), htmlHeaders())
-        
-        case UserCommand.ViewTodoList => {
-            let AppState.AppState(todos) = Ref.get(stateRef);
-            HttpResponse.Ok(Components.todoListHtml(todos), htmlHeaders())
-        }
-        
-        case UserCommand.AddTodo(text) => {
-            if (not String.isEmpty(String.trim(text))) {
-                let AppState.AppState(todos) = Ref.get(stateRef);
-                let id = UUID.randomUUID().toString();
-                let todo = Todo.Todo(id, String.trim(text), false);
-                let newState = AppState.AppState(todo :: todos);
-                Ref.put(newState, stateRef);
-                HttpResponse.Ok(Components.todoItemHtml(todo), htmlHeaders())
-            } else {
-                HttpResponse.Ok(Components.errorHtml("Todo text cannot be empty"), htmlHeaders())
-            }
-        }
-        
-        case UserCommand.ToggleTodo(todoId) => {
-            let AppState.AppState(todos) = Ref.get(stateRef);
-            let (maybeTodo, newTodos) = Todo.toggleTodoInList(todoId, todos);
-            Ref.put(AppState.AppState(newTodos), stateRef);
-            match maybeTodo {
-                case Some(todo) => HttpResponse.Ok(Components.todoItemHtml(todo), htmlHeaders())
-                case None => HttpResponse.Ok(Components.errorHtml("Todo not found"), htmlHeaders())
-            }
-        }
-        
-        case UserCommand.DeleteTodo(todoId) => {
-            let AppState.AppState(todos) = Ref.get(stateRef);
-            let newTodos = List.filter(todo -> Todo.getId(todo) != todoId, todos);
-            Ref.put(AppState.AppState(newTodos), stateRef);
-            HttpResponse.Ok("", htmlHeaders())
-        }
-        
-        case UserCommand.UnknownCommand => 
-            HttpResponse.Error(404, "Not Found")
-    };
-    
-    writeHttpResponse(exchange, response)
+
+    TodoState.handleWithInMemory(stateRef, _ ->
+        run {
+            run {
+                handleUserCommand()
+            } with UserCommands.handleWithHttp(method, path, formData)
+        } with View.handleWithHttp(exchange)
+    )
 }
 
 def htmlHeaders(): Map[String, String] = 

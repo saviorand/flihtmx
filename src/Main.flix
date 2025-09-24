@@ -1,10 +1,12 @@
+///
+/// Effect-Oriented Todo Application with HTMX
+/// 
+/// This application demonstrates effect-oriented programming principles:
+/// 1. Pure business logic
+/// 2. Separation of concerns via algebraic effects
+/// 3. Clean composition of effect handlers
+///
 def main(): Unit \ {IO, Net} =
-    region rc {
-        let stateRef = Ref.fresh(rc, initialState());
-        
-        run {
-            Logger.info("Starting Effect-Oriented Todo server on port 8080...");
-            startServerWithStateRef(stateRef, 8080);
-            Logger.info("Server ready! Visit http://localhost:8080")
-        } with Logger.runWithIO
-    }
+    run {
+        startServer(8080)
+    } with Logger.runWithIO
