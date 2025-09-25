@@ -9,21 +9,21 @@ enum HttpResponse {
     case Error(Int32, String)
 }
 
-def startServer(port: Int32): Unit \ {IO, Net, Logger} = {
+def startServer(port: Int32): Unit \ {IO, Net} = {
     region rc {
         let stateRef = Ref.fresh(rc, initialState());
         let addr = new InetSocketAddress(port);
         let server = JavaHttpServer.create(addr, 0);
         server.createContext("/", createHandler(stateRef));
         server.start();
-        Logger.info("Effect-Oriented Todo Server ready at http://localhost:${port}");
+        println("Effect-Oriented Todo Server ready at http://localhost:${port}");
         
         let currentThread = Thread.currentThread();
         try {
             currentThread.join()
         } catch {
             case _: InterruptedException => 
-                Logger.info("Server shutting down...")
+                println("Server shutting down...")
         }
     }
 }
@@ -44,33 +44,9 @@ def handleRequest(stateRef: Ref[AppState, r], exchange: HttpExchange): Unit \ {I
         run {
             run {
                 handleUserCommand()
-            } with UserCommands.handleWithHttp(method, path, formData)
-        } with View.handleWithHttp(exchange)
+            } with UserInput.handleWithHttp(method, path, formData)
+        } with View.handleWithHtmx(exchange)
     )
-}
-
-def htmlHeaders(): Map[String, String] = 
-    Map#{"Content-Type" => "text/html; charset=utf-8"}
-
-def writeHttpResponse(exchange: HttpExchange, response: HttpResponse): Unit \ IO = {
-    match response {
-        case HttpResponse.Ok(content, headers) => {
-            Map.forEach(key -> value -> exchange.getResponseHeaders().set(key, value), headers);
-            let responseBytes = content.getBytes();
-            exchange.sendResponseHeaders(200, Int32.toInt64(Array.length(responseBytes)));
-            let outputStream = exchange.getResponseBody();
-            outputStream.write(responseBytes);
-            outputStream.close()
-        }
-        case HttpResponse.Error(code, message) => {
-            let responseBytes = message.getBytes();
-            exchange.sendResponseHeaders(code, Int32.toInt64(Array.length(responseBytes)));
-            let outputStream = exchange.getResponseBody();
-            outputStream.write(responseBytes);
-            outputStream.close()
-        }
-    };
-    exchange.close()
 }
 
 def parseFormData(body: String): Map[String, String] = {
@@ -97,3 +73,6 @@ def readRequestBody(exchange: HttpExchange): String \ IO = {
     let scanner = new Scanner(inputStream);
     if (scanner.hasNext()) scanner.useDelimiter("\\A").next() else ""
 }
+
+def htmlHeaders(): Map[String, String] = 
+    Map#{"Content-Type" => "text/html; charset=utf-8"}

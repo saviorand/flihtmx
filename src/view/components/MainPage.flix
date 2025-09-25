@@ -12,7 +12,8 @@ mod Components {
         "<body>",
         "  <div class='container'>",
         "    <h1>Effect-Oriented Todo App</h1>",
-        "    <p class='subtitle'>UI as an Effect</p>",
+        "    <p class='subtitle'>Clean Architecture with Flix</p>",
+        "    <div id='error-container'></div>", // Error container for HTMX targeting
         addFormHtml(),
         "    <div id='todo-list' hx-get='/todos' hx-trigger='load'>",
         "      Loading todos...",
