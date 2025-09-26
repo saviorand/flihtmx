@@ -1,60 +1,68 @@
-mod View {
+eff TodoView {
+    def showHomePage(): String
+    def showTodoList(todos: List[Todo]): String
+    def showTodo(todo: Todo): String
+    def showError(error: TodoError): String
+    def showSuccess(message: String): String
+}
+
+mod HtmlView {
     import com.sun.net.httpserver.HttpExchange
-    
-    pub def handleWithHtmx(exchange: HttpExchange, f: Unit -> a \ ef): a \ (ef - View + IO) =
+
+    pub def runWithWebView(exchange: HttpExchange, f: Unit -> a \ ef): a \ (ef - TodoView + IO) =
         run {
             f()
-        } with handler View {
-            def renderMainPage(_, k) = {
-                writeHtmxResponse(exchange, Components.mainPageHtml(), htmlHeaders());
-                k()
+        } with handler TodoView {
+            def showHomePage(_, k) = {
+                let content = ViewComponents.homePage();
+                writeHtmlResponse(exchange, content);
+                k(content)
             }
-            def renderTodoList(todos, k) = {
-                let content = Components.todoListHtml(todos);
-                let headers = if (isHtmxRequest(exchange)) {
-                    Map.union(htmlHeaders(), Map#{
-                        "HX-Trigger" => "todoListUpdated"
-                    })
-                } else {
-                    htmlHeaders()
-                };
-                writeHtmxResponse(exchange, content, headers);
-                k()
+            
+            def showTodoList(todos, k) = {
+                let content = ViewComponents.todoList(todos);
+                writeHtmxResponse(exchange, content);
+                k(content)
             }
-            def renderTodoItem(todo, k) = {
-                let content = Components.todoItemHtml(todo);
-                let headers = if (isHtmxRequest(exchange)) {
-                    Map.union(htmlHeaders(), Map#{
-                        "HX-Trigger" => "todoItemUpdated"
-                    })
-                } else {
-                    htmlHeaders()
-                };
-                writeHtmxResponse(exchange, content, headers);
-                k()
+            
+            def showTodo(todo, k) = {
+                let content = ViewComponents.todoItem(todo);
+                writeHtmxResponse(exchange, content);
+                k(content)
             }
-            def renderError(message, k) = {
-                let content = Components.errorHtml(message);
-                let headers = if (isHtmxRequest(exchange)) {
-                    Map.union(htmlHeaders(), Map#{
-                        "HX-Reswap" => "innerHTML",
-                        "HX-Retarget" => "#error-container"
-                    })
-                } else {
-                    htmlHeaders()
-                };
-                writeHtmxResponse(exchange, content, headers);
-                k()
+            
+            def showError(error, k) = {
+                let content = ViewComponents.errorMessage(error);
+                writeErrorResponse(exchange, content);
+                k(content)
+            }
+            
+            def showSuccess(message, k) = {
+                let content = ViewComponents.successMessage(message);
+                writeHtmxResponse(exchange, content);
+                k(content)
             }
         }
-
-    def isHtmxRequest(exchange: HttpExchange): Bool \ IO = {
-        let headers = exchange.getRequestHeaders();
-        let htmxHeader = headers.getFirst("HX-Request");
-        not Object.isNull(htmxHeader)
-    }
-
-    def writeHtmxResponse(exchange: HttpExchange, content: String, headers: Map[String, String]): Unit \ IO = {
+    
+    def writeHtmlResponse(exchange: HttpExchange, content: String): Unit \ IO = 
+        writeResponse(exchange, content, Map#{
+            "Content-Type" => "text/html; charset=utf-8"
+        })
+    
+    def writeHtmxResponse(exchange: HttpExchange, content: String): Unit \ IO = 
+        writeResponse(exchange, content, Map#{
+            "Content-Type" => "text/html; charset=utf-8",
+            "HX-Trigger" => "todoUpdated"
+        })
+    
+    def writeErrorResponse(exchange: HttpExchange, content: String): Unit \ IO = 
+        writeResponse(exchange, content, Map#{
+            "Content-Type" => "text/html; charset=utf-8",
+            "HX-Reswap" => "innerHTML",
+            "HX-Retarget" => "#error-container"
+        })
+    
+    def writeResponse(exchange: HttpExchange, content: String, headers: Map[String, String]): Unit \ IO = {
         Map.forEach(key -> value -> exchange.getResponseHeaders().set(key, value), headers);
         let responseBytes = content.getBytes();
         exchange.sendResponseHeaders(200, Int32.toInt64(Array.length(responseBytes)));
@@ -64,4 +72,3 @@ mod View {
         exchange.close()
     }
 }
-

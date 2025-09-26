@@ -1,25 +1,28 @@
-mod Components {
-    pub def todoItemHtml(todo: Todo): String = {
-        let id = Todo.getId(todo);
-        let text = Todo.getText(todo);
-        let completed = Todo.isCompleted(todo);
-        let checkedAttr = if (completed) "checked" else "";
-        let completedClass = if (completed) "completed" else "";
-
+mod ViewComponents {
+    pub def todoItem(todo: Todo): String = {
+        let Todo.Todo(id, text, status) = todo;
+        let TodoId.TodoId(idStr) = id;
+        let TodoText.TodoText(textStr) = text;
+        let completedClass = match status {
+            case TodoStatus.Completed => " completed"
+            case TodoStatus.Active => ""
+        };
+        let statusButton = match status {
+            case TodoStatus.Completed => "Mark Active"
+            case TodoStatus.Active => "Mark Complete"
+        };
+        
         String.unlines(List#{
-            "<div class='todo-item ${completedClass}' id='todo-${id}'>",
-            "  <input type='checkbox' ${checkedAttr}",
-            "         hx-put='/todos/${id}'",
-            "         hx-target='#todo-${id}'",
-            "         hx-swap='outerHTML'>",
-            "  <span class='todo-text ${completedClass}'>${text}</span>",
-            "  <button class='delete-btn'",
-            "          hx-delete='/todos/${id}'",
-            "          hx-target='#todo-${id}'",
-            "          hx-swap='outerHTML'",
-            "          title='Delete todo'>",
-            "    ✗",
-            "  </button>",
+            "<div class='todo-item${completedClass}'>",
+            "    <span class='todo-text'>${textStr}</span>",
+            "    <div class='todo-actions'>",
+            "        <button class='btn btn-secondary' hx-put='/todos/${idStr}' hx-target='#todo-container'>",
+            "            ${statusButton}",
+            "        </button>",
+            "        <button class='btn btn-danger' hx-delete='/todos/${idStr}' hx-target='#todo-container' hx-confirm='Delete this todo?'>",
+            "            Delete",
+            "        </button>",
+            "    </div>",
             "</div>"
         })
     }
