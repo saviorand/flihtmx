@@ -76,3 +76,35 @@ mod HttpRequest {
         }
     }
 }
+
+mod HttpHelper {
+    import com.sun.net.httpserver.HttpExchange
+
+    pub def writeHtmlResponse(exchange: HttpExchange, content: String): Unit \ IO = 
+        writeResponse(exchange, content, Map#{
+            "Content-Type" => "text/html; charset=utf-8"
+        })
+    
+    pub def writeHtmxResponse(exchange: HttpExchange, content: String): Unit \ IO = 
+        writeResponse(exchange, content, Map#{
+            "Content-Type" => "text/html; charset=utf-8",
+            "HX-Trigger" => "todoUpdated"
+        })
+    
+    pub def writeErrorResponse(exchange: HttpExchange, content: String): Unit \ IO = 
+        writeResponse(exchange, content, Map#{
+            "Content-Type" => "text/html; charset=utf-8",
+            "HX-Reswap" => "innerHTML",
+            "HX-Retarget" => "#error-container"
+        })
+    
+    def writeResponse(exchange: HttpExchange, content: String, headers: Map[String, String]): Unit \ IO = {
+        Map.forEach(key -> value -> exchange.getResponseHeaders().set(key, value), headers);
+        let responseBytes = content.getBytes();
+        exchange.sendResponseHeaders(200, Int32.toInt64(Array.length(responseBytes)));
+        let outputStream = exchange.getResponseBody();
+        outputStream.write(responseBytes);
+        outputStream.close();
+        exchange.close()
+    }
+}
