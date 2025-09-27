@@ -2,25 +2,25 @@ def main(): Unit \ {IO, Net} =
     region rc {
         let (config, initialTodos) = run {
             let config = TodoConfig.init();
-            let initialTodos = AppConfig.getInitialTodos(config);
+            let initialTodos = TodoConfig.getInitialTodos(config);
             (config, initialTodos)
         } with TodoConfigHandler.runWithHardCoded;
         
         let stateRef = Ref.fresh(rc, initialTodos);
         
-        run {
-            match AppConfig.getMode(config) {
-                case AppMode.WebApp(port) => runWebApp(port)
-                case AppMode.TestMode => 
-                    println("Test mode not implemented")
-            }
-        } with TodoStorageHandler.runWithState(stateRef)
-          with TodoViewHandler.runWithString
+        match AppConfig.getMode(config) {
+            case AppMode.WebApp(port) => runWebApp(stateRef, port)
+            case AppMode.TestMode => 
+                println("Test mode not implemented")
+        }
     }
 
-def runWebApp(port: Int32): Unit \ {IO, Net} = 
+def runWebApp(stateRef: Ref[List[Todo], r], port: Int32): Unit \ {IO, Net} = 
     let handleRequest = (method: String, path: String, formData: Map[String, String]) -> {
-        let cmd = HttpAdapter.parseCommand(method, path, formData);
-        TodoApplication.handleCommand(cmd)
+        run {
+            let cmd = HttpAdapter.parseCommand(method, path, formData);
+            TodoApplication.handleCommand(cmd)
+        } with TodoStorageHandler.runWithState(stateRef)
+          with TodoViewHandler.runWithString
     };
     WebServer.start(handleRequest, port)
