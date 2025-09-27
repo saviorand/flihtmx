@@ -122,20 +122,6 @@ mod TodoService {
         helper(todos, None, Nil)
 }
 
-enum TodoError with Eq, ToString {
-    case ValidationError(ValidationError),
-    case TodoNotFound(TodoId),
-    case DuplicateTodo(TodoId),
-    case StorageError(String)
-}
-
-enum ValidationError with Eq, ToString {
-    case EmptyText,
-    case TextTooLong(Int32),
-    case TextContainsInvalidChars,
-    case InvalidId(String)
-}
-
 mod TodoValidation {
     pub def validateText(text: String): Result[ValidationError, TodoText] =
         let trimmed = String.trim(text);
@@ -164,4 +150,44 @@ mod TodoValidation {
     
     def isValidIdFormat(id: String): Bool =
         String.forAll(c -> Char.isLetterOrDigit(c) or c == '-', id)
+}
+
+enum TodoError with Eq {
+    case ValidationError(ValidationError),
+    case TodoNotFound(TodoId),
+    case DuplicateTodo(TodoId),
+    case StorageError(String)
+}
+
+enum ValidationError with Eq {
+    case EmptyText,
+    case TextTooLong(Int32),
+    case TextContainsInvalidChars,
+    case InvalidId(String)
+}
+
+instance ToString[ValidationError] {
+    pub def toString(e: ValidationError): String = match e {
+        case ValidationError.EmptyText => 
+            "Please enter some text for your todo item."
+        case ValidationError.TextTooLong(len) => 
+            "Todo text is too long (${len} characters). Please keep it under 500 characters."
+        case ValidationError.TextContainsInvalidChars => 
+            "Todo text contains invalid characters. Please avoid using <, >, and & symbols."
+        case ValidationError.InvalidId(id) => 
+            "Invalid todo ID: ${id}"
+    }
+}
+
+instance ToString[TodoError] {
+    pub def toString(e: TodoError): String = match e {
+        case TodoError.ValidationError(ve) => 
+            ToString.toString(ve)
+        case TodoError.TodoNotFound(TodoId.TodoId(id)) => 
+            "Todo item with ID '${id}' was not found."
+        case TodoError.DuplicateTodo(TodoId.TodoId(id)) => 
+            "A todo item with ID '${id}' already exists."
+        case TodoError.StorageError(msg) => 
+            "Storage error: ${msg}"
+    }
 }
