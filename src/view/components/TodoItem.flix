@@ -14,7 +14,7 @@ mod ViewComponents {
         
         String.unlines(List#{
             "<div class='todo-item${completedClass}'>",
-            "    <span class='todo-text'>${textStr}</span>",
+            "    <span class='todo-text'>${View.escapeHtml(textStr)}</span>",
             "    <div class='todo-actions'>",
             "        <button class='btn btn-secondary' hx-put='/todos/${idStr}' hx-target='#todo-container'>",
             "            ${statusButton}",

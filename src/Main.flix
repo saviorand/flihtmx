@@ -12,8 +12,9 @@ def runWebApp(port: Int32, config: AppConfig): Unit \ {IO, Net} = region rc {
     let stateRef = Ref.fresh(rc, initialTodos);
     
     let handleRequest = (method: String, path: String, formData: Map[String, String]) -> {
+        let cmd = HttpAdapter.parseCommand(method, path, formData);
         run {
-            AppHandler.handleRequest(method, path, formData)
+            TodoApplication.handleCommand(cmd)
         } with TodoStorageHandler.runWithState(stateRef)
           with TodoViewHandler.runWithString
     };
