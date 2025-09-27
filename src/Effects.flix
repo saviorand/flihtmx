@@ -11,5 +11,6 @@ eff TodoView {
 }
 
 eff TodoConfig {
-    def getInitialTodos(): List[Todo]
+    def init(): AppConfig
+    def getInitialTodos(config: AppConfig): List[Todo]
 }

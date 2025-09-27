@@ -45,11 +45,12 @@ mod TodoViewHandler {
 }
 
 mod TodoConfigHandler {
-    pub def runWithConfig(config: AppConfig, f: Unit -> a \ ef): a \ ef - {TodoConfig} + {} =
+    pub def runWithHardCoded(f: Unit -> a \ ef): a \ ef - {TodoConfig} + {} =
         run {
             f()
         } with handler TodoConfig {
-            def getInitialTodos(_, resume) = 
+            def init(_, resume) = resume(AppConfig.webApp(8080))
+            def getInitialTodos(config, resume) = 
                 resume(AppConfig.getInitialTodos(config))
         }
 }
